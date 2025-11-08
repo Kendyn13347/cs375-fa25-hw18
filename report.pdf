@@ -1,0 +1,538 @@
+# TLB and Page Table Lab Report
+
+**Name:** [Kendyn Fredieu]  
+**Date:** [11/07/2025]  
+**Course:** Operating Systems
+
+---
+
+## 1. Design Overview
+
+### 1.1 Address Translation Architecture
+
+#### Virtual Address Breakdown (32-bit)
+```
+┌──────────────┬──────────────┬──────────────┐
+│   L1 Index   │   L2 Index   │    Offset    │
+│   (10 bits)  │   (10 bits)  │   (12 bits)  │
+│   Bits 31-22 │   Bits 21-12 │   Bits 11-0  │
+└──────────────┴──────────────┴──────────────┘
+```
+
+#### 2-Level Page Table Structure
+```
+Virtual Address
+      │
+      ▼
+┌─────────────┐
+│ Page        │ ← L1 index selects entry
+│ Directory   │
+│ (1024       │
+│  entries)   │
+└─────────────┘
+      │
+      ▼ present bit = 1?
+┌─────────────┐
+│ Page        │ ← L2 index selects entry  
+│ Table       │
+│ (1024       │
+│  entries)   │
+└─────────────┘
+      │
+      ▼ valid bit = 1?
+┌─────────────┐
+│ Physical    │ ← offset selects byte
+│ Frame       │
+│ (4096       │
+│  bytes)     │
+└─────────────┘
+      │
+      ▼
+Physical Address
+```
+
+### 1.2 TLB Design
+
+**Structure:**
+- **Type:** Fully associative cache
+- **Size:** 16 entries
+- **Fields per entry:**
+  - VPN (Virtual Page Number): 20 bits
+  - PFN (Physical Frame Number): varies
+  - Valid bit: 1 bit
+  - Timestamp: 64 bits (for LRU)
+
+**Replacement Policy:** Least Recently Used (LRU)
+- Implementation: Timestamp method
+- On access: Update timestamp to current clock
+- On eviction: Find entry with oldest timestamp
+
+### 1.3 Translation Flow
+
+```
+┌─────────────────┐
+│ Virtual Address │
+└────────┬────────┘
+         │
+         ▼
+    ┌────────┐
+    │  TLB   │────► Hit? ─────► Physical Address
+    │ Lookup │                  (Fast path)
+    └────────┘
+         │
+         │ Miss
+         ▼
+  ┌──────────────┐
+  │ Page Table   │
+  │ Walk (L1+L2) │
+  └──────────────┘
+         │
+         ▼
+    Valid page?
+         │
+    ┌────┴────┐
+    │         │
+   Yes       No
+    │         │
+    │         ▼
+    │   ┌──────────┐
+    │   │   Page   │
+    │   │  Fault!  │
+    │   └──────────┘
+    │         │
+    │         ▼
+    │   Allocate Frame
+    │         │
+    └────┬────┘
+         │
+         ▼
+   ┌──────────┐
+   │  Update  │
+   │   TLB    │
+   └──────────┘
+         │
+         ▼
+  Physical Address
+```
+
+---
+
+## 2. Implementation Highlights
+
+### 2.1 LRU Algorithm
+
+**Method:** Timestamp-based LRU
+
+**Pseudocode:**
+```
+On TLB lookup:
+  for each entry in TLB:
+    if entry.valid and entry.vpn == requested_vpn:
+      entry.timestamp = ++global_clock
+      return entry.pfn
+
+On TLB insert:
+  lru_entry = entry with minimum timestamp
+  lru_entry.vpn = new_vpn
+  lru_entry.pfn = new_pfn
+  lru_entry.timestamp = ++global_clock
+  lru_entry.valid = true
+```
+
+**Why timestamp method?**
+- Simple to implement
+- O(n) complexity for eviction (acceptable for small TLB)
+- Accurate LRU tracking
+- No pointer manipulation needed
+
+**Alternative:** Linked list + hash table
+- O(1) lookup and update
+- More complex implementation
+- Better for larger TLBs
+
+### 2.2 Page Fault Handling
+
+**Scenario 1: Page directory entry missing**
+```cpp
+if (!page_directory[l1].present) {
+    page_directory[l1].present = true;
+    page_directory[l1].pt = new PageTableEntry[PT_ENTRIES];
+}
+```
+
+**Scenario 2: Page table entry invalid**
+```cpp
+if (!pte.valid) {
+    // PAGE FAULT!
+    frame = allocate_frame();
+    pte.valid = true;
+    pte.frame = frame;
+}
+```
+
+**Frame Allocation Strategy:**
+1. First 256 accesses: Allocate from free frame pool
+2. After 256 frames used: Random replacement (simulated)
+3. Production systems: More sophisticated (LRU, Clock, etc.)
+
+### 2.3 Memory Allocation
+
+**Physical Memory Constraints:**
+- Total frames: 256
+- Frame size: 4 KB
+- Total physical memory: 1 MB
+
+**Virtual Memory Capacity:**
+- Total pages: 1,048,576 (1M)
+- Page size: 4 KB
+- Total virtual memory: 4 GB
+
+**Ratio:** Virtual memory = 4096× physical memory
+
+---
+
+## 3. Terminal Output Screenshots
+
+### 3.1 Program Header
+```
+=======================================================
+  TLB and Page Table Translation Simulator
+=======================================================
+Configuration:
+  - 2-Level Page Table (10-bit L1, 10-bit L2, 12-bit offset)
+  - TLB: 16 entries, fully associative, LRU replacement
+  - Physical Memory: 256 frames
+  - Total Addresses: 1000
+=======================================================
+```
+
+### 3.2 Sample Translations (First 10)
+```
+[Insert screenshot here showing first 10 translations with some page faults]
+```
+
+### 3.3 Page Fault Examples
+```
+PAGE FAULT: VA 0x70009abc → allocating frame
+VA: 0x70009abc → PA: 0x00012abc [FAULT]
+
+PAGE FAULT: VA 0x7000def0 → allocating frame
+VA: 0x7000def0 → PA: 0x00034ef0 [FAULT]
+```
+
+### 3.4 Summary Statistics
+```
+=======================================================
+  SUMMARY STATISTICS
+=======================================================
+Total Addresses Translated: 1000
+Page Faults: XXX
+Translation Time: XXX μs
+Avg Time per Translation: X.XXX μs
+TLB Hits: XXX, Misses: XXX, Hit Rate: XX.XX%
+=======================================================
+```
+
+---
+
+## 4. Performance Analysis
+
+### 4.1 Baseline Results (16-entry TLB)
+
+| Metric                    | Value      |
+|---------------------------|------------|
+| Total Addresses           | 1,000      |
+| Page Faults               | XXX        |
+| TLB Hits                  | XXX        |
+| TLB Misses                | XXX        |
+| TLB Hit Rate              | XX.XX%     |
+| Translation Time          | XXX μs     |
+| Avg Time per Translation  | X.XXX μs   |
+
+### 4.2 TLB Size Impact
+
+| TLB Size | Hit Rate | Misses | Translation Time (μs) | Speedup vs Size 4 |
+|----------|----------|--------|-----------------------|-------------------|
+| 4        | XX.XX%   | XXX    | XXX.XX                | 1.00x             |
+| 8        | XX.XX%   | XXX    | XXX.XX                | X.XXx             |
+| 16       | XX.XX%   | XXX    | XXX.XX                | X.XXx             |
+| 32       | XX.XX%   | XXX    | XXX.XX                | X.XXx             |
+| 64       | XX.XX%   | XXX    | XXX.XX                | X.XXx             |
+
+**Observations:**
+- [Describe how hit rate changes with TLB size]
+- [Explain diminishing returns]
+- [Relate to working set size]
+
+### 4.3 Graph: TLB Size vs Hit Rate
+```
+[Insert line graph here]
+X-axis: TLB Size (4, 8, 16, 32, 64)
+Y-axis: Hit Rate (%)
+```
+
+**Analysis:**
+- [Explain the curve]
+- [Identify optimal TLB size for this workload]
+- [Discuss cost vs benefit tradeoffs]
+
+### 4.4 Locality Impact
+
+| Locality % | Hot Accesses | Cold Accesses | Hit Rate | Page Faults |
+|------------|--------------|---------------|----------|-------------|
+| 0%         | 0            | 1000          | XX.XX%   | XXX         |
+| 30%        | 300          | 700           | XX.XX%   | XXX         |
+| 50%        | 500          | 500           | XX.XX%   | XXX         |
+| 70%        | 700          | 300           | XX.XX%   | XXX         |
+| 90%        | 900          | 100           | XX.XX%   | XXX         |
+
+**Observations:**
+- [How locality affects TLB performance]
+- [Why spatial/temporal locality matters]
+
+---
+
+## 5. Analysis Questions
+
+### Question 1: Why does TLB improve performance?
+
+**Answer:**
+
+Without TLB (page table walk):
+- Access L1 page directory: 1 memory access
+- Access L2 page table: 1 memory access  
+- Access actual data: 1 memory access
+- **Total: 3 memory accesses**
+
+With TLB (hit):
+- TLB lookup: Very fast (on-chip cache)
+- Access actual data: 1 memory access
+- **Total: 1 memory access**
+
+**Speedup calculation:**
+```
+Memory access time: ~100 ns
+TLB access time: ~1 ns
+
+Without TLB: 2 × 100 ns = 200 ns overhead per translation
+With TLB (hit): 1 ns overhead
+
+Speedup = 200 / 1 = 200× faster!
+```
+
+**Real-world impact:**
+- With 90% hit rate: Avg = 0.9 × 1 + 0.1 × 200 = 20.9 ns
+- Effective speedup: 200 / 20.9 ≈ 9.6×
+
+**Key insight:** Even small TLBs provide massive performance gains due to program locality!
+
+---
+
+### Question 2: What happens if working set > physical memory?
+
+**Answer:**
+
+**Working Set:** The set of pages a process actively uses.
+
+**Scenario:** Program uses 300 unique pages, but only 256 frames available.
+
+**Result: THRASHING**
+
+**What happens:**
+1. All 256 frames fill up quickly
+2. New page access requires evicting an existing page
+3. Evicted page likely needed soon (working set > physical memory)
+4. Constant page faults and replacements
+5. System spends more time paging than executing
+
+**Performance impact:**
+```
+Normal case:
+  Page fault rate: <1%
+  CPU utilization: ~90%
+
+Thrashing:
+  Page fault rate: >50%
+  CPU utilization: <10%
+  Most time in OS handling faults!
+```
+
+**Solutions:**
+1. **Increase physical memory** (add RAM)
+2. **Reduce working set** (optimize algorithm)
+3. **Working set algorithm** (OS evicts pages not in working set)
+4. **Page fault frequency** (adjust multiprogramming level)
+
+**Real-world example:**
+Running Chrome with 100 tabs on 4GB RAM → constant disk swapping → slow!
+
+---
+
+### Question 3: How would you implement LRU with linked list + hash?
+
+**Answer:**
+
+**Data structures:**
+```cpp
+struct LRUNode {
+    uint32_t vpn;
+    uint32_t pfn;
+    LRUNode* prev;
+    LRUNode* next;
+};
+
+unordered_map<uint32_t, LRUNode*> hash_table;
+LRUNode* head;  // Most recently used
+LRUNode* tail;  // Least recently used
+```
+
+**Operations:**
+
+**1. Lookup (O(1)):**
+```cpp
+bool lookup(uint32_t vpn, uint32_t& pfn) {
+    if (hash_table.find(vpn) == hash_table.end())
+        return false;  // Miss
+    
+    LRUNode* node = hash_table[vpn];
+    pfn = node->pfn;
+    
+    // Move to head (mark as recently used)
+    remove_from_list(node);
+    insert_at_head(node);
+    
+    return true;  // Hit
+}
+```
+
+**2. Insert (O(1)):**
+```cpp
+void insert(uint32_t vpn, uint32_t pfn) {
+    if (hash_table.size() == TLB_SIZE) {
+        // Evict LRU (tail)
+        LRUNode* victim = tail;
+        remove_from_list(victim);
+        hash_table.erase(victim->vpn);
+        delete victim;
+    }
+    
+    // Insert new node at head
+    LRUNode* node = new LRUNode{vpn, pfn, nullptr, head};
+    insert_at_head(node);
+    hash_table[vpn] = node;
+}
+```
+
+**Comparison with timestamp method:**
+
+| Aspect           | Timestamp    | Linked List + Hash |
+|------------------|--------------|--------------------|
+| Lookup time      | O(n)         | O(1)               |
+| Update time      | O(1)         | O(1)               |
+| Eviction time    | O(n)         | O(1)               |
+| Space overhead   | Low          | Medium (pointers)  |
+| Implementation   | Simple       | Complex            |
+| Best for         | Small TLBs   | Large TLBs         |
+
+**Why hash + linked list is better for large TLBs:**
+- O(1) operations vs O(n)
+- Scalable to 1000+ entries
+- Used in real CPUs (Intel, AMD)
+
+---
+
+## 6. Discussion
+
+### 6.1 Key Findings
+
+1. **TLB is critical for performance**
+   - Even a small 16-entry TLB provides XX% hit rate
+   - Reduces translation overhead by ~XX×
+
+2. **Locality determines TLB effectiveness**
+   - High locality (70%+) → high hit rate
+   - Random access → poor hit rate
+
+3. **Working set vs physical memory matters**
+   - Working set < 256 pages → excellent performance
+   - Working set > 256 pages → thrashing risk
+
+### 6.2 Real-World Implications
+
+**Modern systems:**
+- L1 TLB: 64-128 entries (data + instruction)
+- L2 TLB: 512-1536 entries
+- Huge pages (2MB, 1GB) reduce TLB pressure
+
+**Performance impact:**
+- Database systems: TLB misses major bottleneck
+- Scientific computing: Large arrays → TLB thrashing
+- Web servers: Many small objects → good TLB hit rate
+
+### 6.3 Limitations of This Simulation
+
+1. **Simplified replacement:** Random vs real LRU/Clock
+2. **No dirty bits:** Real systems track write-backs
+3. **Single-level TLB:** Real systems have L1 + L2
+4. **No huge pages:** 2MB/1GB pages reduce TLB misses
+5. **No page table caching:** Real systems cache intermediate levels
+
+---
+
+## 7. Conclusion
+
+This lab demonstrated the critical role of TLBs in modern virtual memory systems. Key takeaways:
+
+1. **TLBs are essential:** Multi-level page tables are slow without caching
+2. **Locality is crucial:** Programs with good locality benefit most from TLBs
+3. **Size matters, but diminishing returns:** 16-32 entries often sufficient
+4. **Design tradeoffs:** Hardware complexity vs performance gains
+
+**Future work:**
+- Implement different replacement policies (Clock, Second Chance)
+- Add support for huge pages
+- Simulate multi-level TLB hierarchy
+- Model real-world workloads (database, web server)
+
+---
+
+## Appendix: How to Run Experiments
+
+### A.1 Change TLB Size
+Edit `main.cpp` line 53:
+```cpp
+TLBEntry entries[16];  // Change 16 to 4, 8, 32, 64
+```
+
+Recompile and run:
+```bash
+make clean
+make all
+./lab.exe
+```
+
+### A.2 Change Locality
+Edit `generate_addresses.cpp` line 20:
+```cpp
+uint32_t va = (i < 700) ? hot(rng) : dist(rng);  // Change 700
+```
+
+Regenerate and run:
+```bash
+./generate.exe
+./lab.exe
+```
+
+### A.3 Change Working Set Size
+Edit `generate_addresses.cpp` line 18:
+```cpp
+uniform_int_distribution<uint32_t> hot(0x70000000, 0x700FFFFF);
+// For 16 pages: 0x7000FFFF
+// For 64 pages: 0x7003FFFF
+// For 1024 pages: 0x703FFFFF
+```
+
+---
+
+**Total Pages:** 8
+
