@@ -211,6 +211,11 @@ Configuration:
 [Insert screenshot here showing first 10 translations with some page faults]
 ```
 
+
+ 
+
+
+
 ### 3.3 Page Fault Examples
 ```
 PAGE FAULT: VA 0x70009abc → allocating frame
